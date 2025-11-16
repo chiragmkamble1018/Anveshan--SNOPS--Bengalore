@@ -1,2 +1,1 @@
 The Smart Disaster Alert Node is a scalable, solar-powered, LoRa-based IoT system that detects multiple hazards, including floods, gas leaks, vibrations. It provides real-time early warnings even in remote areas without internet. The system is modular, low-cost, and easy to deploy on mobile rovers or fixed stations. By sending instant alerts to a central hub or local indicators, it helps save lives and protect assets.
-![Uploading image.png…]()
