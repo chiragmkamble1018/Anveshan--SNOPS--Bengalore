@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SNOPS - Disaster Alert System</title>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root{
+      --bg:#0f1113;
+      --card:#141618;
+      --accent:#00eaff;
+      --muted:#9aa3ad;
+      --danger:#ff4d4f;
+      --warning:#ffae00;
+      --ok:#2ee06a;
+      --glass: rgba(255,255,255,0.02);
+      --radius:12px;
+      font-family:Inter,Segoe UI,Arial,sans-serif;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      background:linear-gradient(180deg,#0b0c0d 0%, #0f1113 100%);
+      color:#e6eef6;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+      padding:18px;
+    }
+    .topbar{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:18px;
+    }
+    h1{
+      margin:0;
+      font-size:20px;
+      color:var(--accent);
+    }
+    .controls{
+      display:flex;
+      gap:8px;
+      align-items:center;
+    }
+    button, .btn {
+      background:var(--card);
+      color:inherit;
+      border:1px solid rgba(255,255,255,0.03);
+      padding:8px 12px;
+      border-radius:8px;
+      cursor:pointer;
+    }
+    button:hover{ transform:translateY(-1px) }
+    .btn-primary{
+      background:linear-gradient(90deg,var(--accent),#60f0ff);
+      color:#041018;
+      font-weight:600;
+      border:none;
+    }
+
+    .layout{
+      display:grid;
+      grid-template-columns: 340px 1fr 300px;
+      gap:16px;
+      align-items:start;
+    }
+
+    /* left column */
+    .left {
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+
+    .card{
+      background:var(--card);
+      padding:14px;
+      border-radius:var(--radius);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.6);
+    }
+
+    .sensor-item{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      padding:8px 4px;
+      border-bottom:1px dashed rgba(255,255,255,0.02);
+      font-size:15px;
+    }
+    .sensor-item:last-child{ border-bottom:0 }
+
+    .value {
+      font-weight:700;
+      color:#fff;
+      font-size:15px;
+    }
+
+    /* center (charts + packet log) */
+    .center {
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+
+    .wide-chart{
+      display:flex;
+      gap:12px;
+      background:var(--glass);
+      padding:12px;
+      border-radius:10px;
+      align-items:center;
+      justify-content:space-between;
+      flex-wrap:wrap;
+    }
+    canvas{ background:transparent; width:100% !important; max-height:200px; }
+
+    .log {
+      height:160px;
+      overflow:auto;
+      background:#050607;
+      padding:8px;
+      border-radius:8px;
+      font-family:monospace;
+      font-size:13px;
+    }
+
+    table {
+      width:100%;
+      border-collapse:collapse;
+      font-size:13px;
+    }
+    table th, table td {
+      text-align:left;
+      padding:6px 8px;
+      border-bottom:1px solid rgba(255,255,255,0.03);
+    }
+    .status {
+      font-weight:700;
+      padding:6px 10px;
+      border-radius:8px;
+      display:inline-block;
+    }
+
+    .status-normal{ background:rgba(46,224,106,0.12); color:var(--ok) }
+    .status-warning{ background:rgba(255,174,0,0.08); color:var(--warning) }
+    .status-critical{ background:rgba(255,77,79,0.08); color:var(--danger) }
+
+    .right {
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+
+    .small {
+      font-size:13px;
+      color:var(--muted);
+    }
+
+    .flex-row { display:flex; gap:8px; align-items:center; }
+    .badge { background:#081014; padding:6px 8px; border-radius:8px; font-weight:700; color:#9fdced; }
+
+    /* Popup */
+    .modal {
+      position:fixed;
+      inset:0;
+      display:none;
+      justify-content:center;
+      align-items:center;
+      background:rgba(0,0,0,0.45);
+      z-index:3000;
+    }
+    .modal.show { display:flex; }
+    .modal-card{
+      background:linear-gradient(180deg,#121416,#0e1113);
+      padding:20px;
+      border-radius:12px;
+      box-shadow:0 10px 40px rgba(0,0,0,0.7);
+      min-width:320px; max-width:520px;
+    }
+    .modal-card h3 { margin:0 0 8px 0; color:var(--danger) }
+    .modal-card p { margin:0 0 12px 0; color:var(--muted) }
+
+    footer {
+      margin-top:18px;
+      color:var(--muted);
+      font-size:13px;
+      text-align:center;
+    }
+
+    .small-btn { padding:6px 8px; font-size:13px }
+
+    /* responsive */
+    @media (max-width:1100px){
+      .layout{ grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <h1>SNOPS - Disaster Alert System</h1>
+
+    <div class="controls">
+      <label class="small">Socket.IO:</label>
+      <span id="socketStatus" class="status status-normal">Connected</span>
+
+      <button id="downloadLogs" class="btn">Download Logs</button>
+      <button id="toggleSound" class="btn small-btn">🔔 Sound: On</button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <!-- LEFT -->
+    <div class="left">
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Real-Time Sensor Data</h3>
+
+        <div class="sensor-item"><div>TEMPERATURE</div><div class="value" id="tempVal">-- °C</div></div>
+        <div class="sensor-item"><div>HUMIDITY</div><div class="value" id="humVal">-- %</div></div>
+        <div class="sensor-item"><div>GAS LEVEL</div><div class="value" id="gasVal">--</div></div>
+        <div class="sensor-item"><div>VIBRATION</div><div class="value" id="vibVal">--</div></div>
+        <div class="sensor-item"><div>WATER LEVEL</div><div class="value" id="distVal">-- cm</div></div>
+        <div class="sensor-item"><div>LAST UPDATE</div><div class="value" id="lastUpdate">--</div></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Hazard Indicator</h3>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-size:13px;color:var(--muted)">Current Status</div>
+            <div id="hazardIndicator" class="status status-normal" style="margin-top:8px">Normal</div>
+          </div>
+          <div style="text-align:right">
+            <div class="small">Node</div>
+            <div class="badge">Rover Node: Field Unit 1</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">AI Risk Predictions</h3>
+        <div class="sensor-item"><div>FLOOD RISK</div><div class="value" id="floodRisk">--%</div></div>
+        <div class="sensor-item"><div>LANDSLIDE RISK</div><div class="value" id="landslideRisk">--%</div></div>
+        <div class="sensor-item"><div>GAS LEAK RISK</div><div class="value" id="gasRisk">--%</div></div>
+        <div class="sensor-item"><div>LAST PREDICTION</div><div class="value" id="lastPrediction">--</div></div>
+      </div>
+    </div>
+
+    <!-- CENTER -->
+    <div class="center">
+      <div class="card wide-chart">
+        <div style="flex:1; min-width:220px; margin-right:10px">
+          <div style="font-size:13px;color:var(--muted)">Temperature (°C)</div>
+          <canvas id="chartTemp"></canvas>
+        </div>
+        <div style="flex:1; min-width:220px; margin-right:10px">
+          <div style="font-size:13px;color:var(--muted)">Humidity (%)</div>
+          <canvas id="chartHum"></canvas>
+        </div>
+        <div style="flex:1; min-width:220px;">
+          <div style="font-size:13px;color:var(--muted)">Gas Level</div>
+          <canvas id="chartGas"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Alert History</h3>
+        <div style="max-height:220px; overflow:auto;">
+          <table id="historyTable">
+            <thead>
+              <tr><th>Time</th><th>Type</th><th>Message</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">System Health</h3>
+        <div class="sensor-item"><div>PACKET COUNT</div><div class="value" id="pktCount">0</div></div>
+        <div class="sensor-item"><div>UPTIME</div><div class="value" id="uptime">0s</div></div>
+        <div class="sensor-item"><div>SYSTEM STATUS</div><div class="value" id="systemStatus">Online</div></div>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div class="right">
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Quick Actions</h3>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button id="clearLogs" class="btn">Clear Logs</button>
+          <button id="resetHistory" class="btn">Clear Alert History</button>
+          <button id="simulateAlert" class="btn">Simulate Alert</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Connection Status</h3>
+        <div class="small">Socket.IO: <span id="socketStatusText">Connected</span></div>
+        <div class="small">Data Source: <span id="dataSource">NodeMCU Receiver</span></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">About SNOPS</h3>
+        <div class="small">Smart Networked Operational Prediction System for real-time disaster monitoring and AI-powered early warnings.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ALERT MODAL -->
+  <div class="modal" id="alertModal" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <h3 id="modalTitle">🚨 ALERT DETECTED</h3>
+      <p id="modalMsg">A critical hazard was detected by the system.</p>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <button id="dismissAlert" class="btn">Dismiss</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    SNOPS Disaster Alert System — Real-time monitoring dashboard
+  </footer>
+
+<script>
+// Socket.IO connection
+const socket = io();
+
+// State variables
+let packetCount = 0;
+let startTime = Date.now();
+let soundEnabled = true;
+let alertHistory = [];
+
+// Chart instances
+const chartTemp = new Chart(document.getElementById('chartTemp').getContext('2d'), {
+  type:'line',
+  data:{ labels:[], datasets:[{ label:'Temp (°C)', data:[], borderColor:'#59f2ff', backgroundColor:'rgba(89,242,255,0.06)', tension:0.35, pointRadius:0 }]},
+  options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, animation:false }
+});
+
+const chartHum = new Chart(document.getElementById('chartHum').getContext('2d'), {
+  type:'line',
+  data:{ labels:[], datasets:[{ label:'Hum (%)', data:[], borderColor:'#ffb86b', backgroundColor:'rgba(255,184,107,0.06)', tension:0.35, pointRadius:0 }]},
+  options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, animation:false }
+});
+
+const chartGas = new Chart(document.getElementById('chartGas').getContext('2d'), {
+  type:'line',
+  data:{ labels:[], datasets:[{ label:'Gas', data:[], borderColor:'#ff6b6b', backgroundColor:'rgba(255,107,107,0.06)', tension:0.35, pointRadius:0 }]},
+  options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, animation:false }
+});
+
+// Update sensor data
+function updateSensorData(data) {
+  if (data.temperature !== undefined) {
+    document.getElementById('tempVal').innerText = data.temperature + ' °C';
+    pushChart(chartTemp, data.temperature);
+  }
+  if (data.humidity !== undefined) {
+    document.getElementById('humVal').innerText = data.humidity + ' %';
+    pushChart(chartHum, data.humidity);
+  }
+  if (data.gas_level !== undefined) {
+    document.getElementById('gasVal').innerText = data.gas_level;
+    pushChart(chartGas, data.gas_level);
+  }
+  if (data.vibration !== undefined) {
+    document.getElementById('vibVal').innerText = data.vibration ? 'DETECTED' : 'NONE';
+  }
+  if (data.distance !== undefined) {
+    document.getElementById('distVal').innerText = data.distance + ' cm';
+  }
+  if (data.last_update !== undefined) {
+    document.getElementById('lastUpdate').innerText = data.last_update;
+  }
+}
+
+// Update predictions
+function updatePredictions(data) {
+  if (data.flood_risk !== undefined) {
+    document.getElementById('floodRisk').innerText = Math.round(data.flood_risk * 100) + '%';
+  }
+  if (data.landslide_risk !== undefined) {
+    document.getElementById('landslideRisk').innerText = Math.round(data.landslide_risk * 100) + '%';
+  }
+  if (data.gas_leak_risk !== undefined) {
+    document.getElementById('gasRisk').innerText = Math.round(data.gas_leak_risk * 100) + '%';
+  }
+  if (data.last_prediction !== undefined) {
+    document.getElementById('lastPrediction').innerText = data.last_prediction;
+  }
+}
+
+// Chart management
+function pushChart(chart, value) {
+  chart.data.labels.push(new Date().toLocaleTimeString());
+  chart.data.datasets[0].data.push(value);
+  
+  // Keep only last 20 data points
+  if (chart.data.labels.length > 20) {
+    chart.data.labels.shift();
+    chart.data.datasets[0].data.shift();
+  }
+  
+  chart.update('none');
+}
+
+// Alert handling
+function showAlert(alertData) {
+  document.getElementById('modalTitle').innerText = '🚨 ' + alertData.type;
+  document.getElementById('modalMsg').innerText = alertData.message;
+  document.getElementById('alertModal').classList.add('show');
+  
+  // Update hazard indicator
+  const indicator = document.getElementById('hazardIndicator');
+  indicator.className = 'status status-critical';
+  indicator.innerText = alertData.type;
+  
+  // Play alert sound
+  if (soundEnabled) playAlertSound();
+  
+  // Add to history
+  addAlertToHistory(alertData);
+}
+
+function playAlertSound() {
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const oscillator = audioContext.createOscillator();
+  const gainNode = audioContext.createGain();
+
+  oscillator.connect(gainNode);
+  gainNode.connect(audioContext.destination);
+
+  oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+  oscillator.frequency.setValueAtTime(600, audioContext.currentTime + 0.1);
+  
+  gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+  gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+
+  oscillator.start(audioContext.currentTime);
+  oscillator.stop(audioContext.currentTime + 0.5);
+}
+
+function addAlertToHistory(alertData) {
+  const tbody = document.querySelector('#historyTable tbody');
+  const row = document.createElement('tr');
+  
+  row.innerHTML = `
+    <td>${alertData.timestamp}</td>
+    <td>${alertData.type}</td>
+    <td>${alertData.message}</td>
+  `;
+  
+  tbody.insertBefore(row, tbody.firstChild);
+  
+  // Keep only last 10 alerts
+  if (tbody.children.length > 10) {
+    tbody.removeChild(tbody.lastChild);
+  }
+}
+
+// System health
+function updateSystemHealth() {
+  const uptimeSec = Math.floor((Date.now() - startTime) / 1000);
+  document.getElementById('uptime').innerText = formatUptime(uptimeSec);
+  document.getElementById('pktCount').innerText = packetCount;
+}
+
+function formatUptime(seconds) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Socket event handlers
+socket.on('connect', function() {
+  document.getElementById('socketStatusText').innerText = 'Connected';
+  document.getElementById('socketStatus').className = 'status status-normal';
+  document.getElementById('systemStatus').innerText = 'Online';
+});
+
+socket.on('disconnect', function() {
+  document.getElementById('socketStatusText').innerText = 'Disconnected';
+  document.getElementById('socketStatus').className = 'status status-critical';
+  document.getElementById('systemStatus').innerText = 'Offline';
+});
+
+socket.on('sensor_update', function(data) {
+  packetCount++;
+  updateSensorData(data);
+  updateSystemHealth();
+});
+
+socket.on('prediction_update', function(data) {
+  updatePredictions(data);
+});
+
+socket.on('alert', function(data) {
+  showAlert(data);
+});
+
+socket.on('alerts_history', function(alerts) {
+  const tbody = document.querySelector('#historyTable tbody');
+  tbody.innerHTML = '';
+  alerts.forEach(alert => addAlertToHistory(alert));
+});
+
+// UI event handlers
+document.getElementById('dismissAlert').addEventListener('click', function() {
+  document.getElementById('alertModal').classList.remove('show');
+  // Reset hazard indicator to normal after dismissing alert
+  document.getElementById('hazardIndicator').className = 'status status-normal';
+  document.getElementById('hazardIndicator').innerText = 'Normal';
+});
+
+document.getElementById('clearLogs').addEventListener('click', function() {
+  packetCount = 0;
+  updateSystemHealth();
+});
+
+document.getElementById('resetHistory').addEventListener('click', function() {
+  document.querySelector('#historyTable tbody').innerHTML = '';
+});
+
+document.getElementById('simulateAlert').addEventListener('click', function() {
+  const testAlert = {
+    type: 'TEST ALERT',
+    message: 'This is a test alert simulation',
+    timestamp: new Date().toLocaleTimeString()
+  };
+  showAlert(testAlert);
+});
+
+document.getElementById('downloadLogs').addEventListener('click', function() {
+  const logs = `SNOPS System Logs\nGenerated: ${new Date().toLocaleString()}\n\n` +
+               `Packets Received: ${packetCount}\n` +
+               `Uptime: ${formatUptime(Math.floor((Date.now() - startTime) / 1000))}\n` +
+               `Alerts: ${alertHistory.length}`;
+  
+  const blob = new Blob([logs], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `snops_logs_${Date.now()}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById('toggleSound').addEventListener('click', function(e) {
+  soundEnabled = !soundEnabled;
+  e.target.innerText = soundEnabled ? '🔔 Sound: On' : '🔕 Sound: Off';
+});
+
+// Initialize
+updateSystemHealth();
+setInterval(updateSystemHealth, 1000);
+</script>
+</body>
+</html>
