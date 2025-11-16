@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>LoRa Rover — Hazard Monitoring Dashboard</title>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root{
+      --bg:#0f1113;
+      --card:#141618;
+      --accent:#00eaff;
+      --muted:#9aa3ad;
+      --danger:#ff4d4f;
+      --warning:#ffae00;
+      --ok:#2ee06a;
+      --glass: rgba(255,255,255,0.02);
+      --radius:12px;
+      font-family:Inter,Segoe UI,Arial,sans-serif;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      background:linear-gradient(180deg,#0b0c0d 0%, #0f1113 100%);
+      color:#e6eef6;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+      padding:18px;
+    }
+    .topbar{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:18px;
+    }
+    h1{
+      margin:0;
+      font-size:20px;
+      color:var(--accent);
+    }
+    .controls{
+      display:flex;
+      gap:8px;
+      align-items:center;
+    }
+    button, .btn {
+      background:var(--card);
+      color:inherit;
+      border:1px solid rgba(255,255,255,0.03);
+      padding:8px 12px;
+      border-radius:8px;
+      cursor:pointer;
+    }
+    button:hover{ transform:translateY(-1px) }
+    .btn-primary{
+      background:linear-gradient(90deg,var(--accent),#60f0ff);
+      color:#041018;
+      font-weight:600;
+      border:none;
+    }
+
+    .layout{
+      display:grid;
+      grid-template-columns: 340px 1fr 300px;
+      gap:16px;
+      align-items:start;
+    }
+
+    /* left column */
+    .left {
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+
+    .card{
+      background:var(--card);
+      padding:14px;
+      border-radius:var(--radius);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.6);
+    }
+
+    .sensor-item{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      padding:8px 4px;
+      border-bottom:1px dashed rgba(255,255,255,0.02);
+      font-size:15px;
+    }
+    .sensor-item:last-child{ border-bottom:0 }
+
+    .value {
+      font-weight:700;
+      color:#fff;
+      font-size:15px;
+    }
+
+    /* center (charts + packet log) */
+    .center {
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+
+    .wide-chart{
+      display:flex;
+      gap:12px;
+      background:var(--glass);
+      padding:12px;
+      border-radius:10px;
+      align-items:center;
+      justify-content:space-between;
+      flex-wrap:wrap;
+    }
+    canvas{ background:transparent; width:100% !important; max-height:200px; }
+
+    .log {
+      height:160px;
+      overflow:auto;
+      background:#050607;
+      padding:8px;
+      border-radius:8px;
+      font-family:monospace;
+      font-size:13px;
+    }
+
+    table {
+      width:100%;
+      border-collapse:collapse;
+      font-size:13px;
+    }
+    table th, table td {
+      text-align:left;
+      padding:6px 8px;
+      border-bottom:1px solid rgba(255,255,255,0.03);
+    }
+    .status {
+      font-weight:700;
+      padding:6px 10px;
+      border-radius:8px;
+      display:inline-block;
+    }
+
+    .status-normal{ background:rgba(46,224,106,0.12); color:var(--ok) }
+    .status-warning{ background:rgba(255,174,0,0.08); color:var(--warning) }
+    .status-critical{ background:rgba(255,77,79,0.08); color:var(--danger) }
+
+    .right {
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+
+    .small {
+      font-size:13px;
+      color:var(--muted);
+    }
+
+    .flex-row { display:flex; gap:8px; align-items:center; }
+    .badge { background:#081014; padding:6px 8px; border-radius:8px; font-weight:700; color:#9fdced; }
+
+    /* Popup */
+    .modal {
+      position:fixed;
+      inset:0;
+      display:none;
+      justify-content:center;
+      align-items:center;
+      background:rgba(0,0,0,0.45);
+      z-index:3000;
+    }
+    .modal.show { display:flex; }
+    .modal-card{
+      background:linear-gradient(180deg,#121416,#0e1113);
+      padding:20px;
+      border-radius:12px;
+      box-shadow:0 10px 40px rgba(0,0,0,0.7);
+      min-width:320px; max-width:520px;
+    }
+    .modal-card h3 { margin:0 0 8px 0; color:var(--danger) }
+    .modal-card p { margin:0 0 12px 0; color:var(--muted) }
+
+    footer {
+      margin-top:18px;
+      color:var(--muted);
+      font-size:13px;
+      text-align:center;
+    }
+
+    .small-btn { padding:6px 8px; font-size:13px }
+
+    /* responsive */
+    @media (max-width:1100px){
+      .layout{ grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <h1>LoRa Rover — Hazard Monitoring Dashboard</h1>
+
+    <div class="controls">
+      <label class="small">WebSocket:</label>
+      <input id="wsUrl" type="text" value="ws://192.168.4.1:81" style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);background:#0b0c0d;color:#fff" />
+      <button id="connectWs" class="btn">Connect WS</button>
+
+      <button id="connectSerial" class="btn">Connect Serial</button>
+
+      <button id="downloadLogs" class="btn">Download Logs</button>
+
+      <button id="toggleSound" class="btn small-btn">🔔 Sound: Off</button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <!-- LEFT -->
+    <div class="left">
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Real-Time Sensor Data</h3>
+
+        <div class="sensor-item"><div>TEMPERATURE</div><div class="value" id="tempVal">-- °C</div></div>
+        <div class="sensor-item"><div>HUMIDITY</div><div class="value" id="humVal">-- %</div></div>
+        <div class="sensor-item"><div>GAS (ADC)</div><div class="value" id="gasVal">--</div></div>
+        <div class="sensor-item"><div>VIBRATION</div><div class="value" id="vibVal">--</div></div>
+        <div class="sensor-item"><div>DISTANCE</div><div class="value" id="distVal">-- cm</div></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Hazard Indicator</h3>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-size:13px;color:var(--muted)">Current Status</div>
+            <div id="hazardIndicator" class="status status-normal" style="margin-top:8px">Normal</div>
+          </div>
+          <div style="text-align:right">
+            <div class="small">Node</div>
+            <div class="badge">Rover Node: Field Unit 1</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">LoRa Packet Log</h3>
+        <div class="log" id="packetLog" aria-live="polite"></div>
+      </div>
+    </div>
+
+    <!-- CENTER -->
+    <div class="center">
+      <div class="card wide-chart">
+        <div style="flex:1; min-width:220px; margin-right:10px">
+          <div style="font-size:13px;color:var(--muted)">Temperature (°C)</div>
+          <canvas id="chartTemp"></canvas>
+        </div>
+        <div style="flex:1; min-width:220px; margin-right:10px">
+          <div style="font-size:13px;color:var(--muted)">Humidity (%)</div>
+          <canvas id="chartHum"></canvas>
+        </div>
+        <div style="flex:1; min-width:220px;">
+          <div style="font-size:13px;color:var(--muted)">Gas (ADC)</div>
+          <canvas id="chartGas"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Event History (alerts)</h3>
+        <div style="max-height:220px; overflow:auto;">
+          <table id="historyTable">
+            <thead>
+              <tr><th>Time</th><th>Type</th><th>Snapshot</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">System Health</h3>
+        <div class="sensor-item"><div>RSSI</div><div class="value" id="rssiVal">-- dBm</div></div>
+        <div class="sensor-item"><div>Packet Count</div><div class="value" id="pktCount">0</div></div>
+        <div class="sensor-item"><div>Uptime</div><div class="value" id="uptime">0s</div></div>
+        <div class="sensor-item"><div>Battery</div><div class="value" id="batVal">-- %</div></div>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div class="right">
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Quick Actions</h3>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button id="clearLogs" class="btn">Clear Logs</button>
+          <button id="resetHistory" class="btn">Clear Event History</button>
+          <button id="simulateAlert" class="btn">Simulate Alert</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Connection Status</h3>
+        <div class="small">WebSocket: <span id="wsStatus">Disconnected</span></div>
+        <div class="small">Serial: <span id="serialStatus">Disconnected</span></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">About</h3>
+        <div class="small">Offline-capable frontend for LoRa rover monitoring. Supports JSON or key:value CSV payloads.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ALERT MODAL -->
+  <div class="modal" id="alertModal" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <h3 id="modalTitle">ALERT</h3>
+      <p id="modalMsg">A critical hazard was detected by the rover.</p>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <button id="dismissAlert" class="btn">Dismiss</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Dashboard — Local demo. Connect to real gateway via WebSocket or Serial Web API.
+  </footer>
+
+<script>
+/* -------------------------
+   Configuration & state
+--------------------------*/
+const WS_URL_DEFAULT = document.getElementById('wsUrl').value || "ws://192.168.4.1:81";
+let WS_URL = WS_URL_DEFAULT;
+let ws = null;
+let serialPort = null;
+let serialReader = null;
+let packetCount = 0;
+let startTime = Date.now();
+let soundEnabled = false;
+let history = JSON.parse(localStorage.getItem('eventHistory') || "[]");
+const MAX_HISTORY = 200; // keep last N events
+const CHART_WINDOW = 30; // number of points to keep
+
+// thresholds (adjust to match your sensors)
+const THRESHOLD = {
+  HUM_WARNING: 80,
+  GAS_CRITICAL: 500,
+  GAS_WARNING: 450
+};
+
+/* -------------------------
+   Helper: parse incoming message
+   Accepts JSON or CSV KEY:VAL pairs
+--------------------------*/
+function parsePayload(text){
+  text = text.trim();
+  // try JSON
+  try {
+    const obj = JSON.parse(text);
+    if (typeof obj === 'object') return obj;
+  } catch(e){}
+
+  // normalize common separators
+  // Example: TEMP:32,HUM:74,GAS:410,VIB:None,DIST:34,RSSI:-72,BATT:95,ALERT:NONE
+  const pairs = text.split(/[,\n\r]+/).map(s => s.trim()).filter(Boolean);
+  const out = {};
+  for (let p of pairs) {
+    // accept key:val or key=val
+    let [k,v] = p.includes(':') ? p.split(':') : p.includes('=') ? p.split('=') : [null,null];
+    if (!k) {
+      // fallback: word token (e.g., ALERT)
+      out['RAW'] = out['RAW'] ? (out['RAW'] + " " + p) : p;
+      continue;
+    }
+    k = k.replace(/[^a-zA-Z0-9_]/g,'').toUpperCase();
+    v = v === undefined ? '' : v.trim();
+    // coerce numbers
+    if (v !== "" && !isNaN(v)) v = Number(v);
+    out[k] = v;
+  }
+  return out;
+}
+
+/* -------------------------
+   UI update routines
+--------------------------*/
+function setSensorUI(data){
+  if (data.TEMP !== undefined) document.getElementById('tempVal').innerText = `${data.TEMP} °C`;
+  if (data.HUM !== undefined) document.getElementById('humVal').innerText = `${data.HUM} %`;
+  if (data.GAS !== undefined) document.getElementById('gasVal').innerText = `${data.GAS}`;
+  if (data.VIB !== undefined) document.getElementById('vibVal').innerText = `${data.VIB}`;
+  if (data.DIST !== undefined) document.getElementById('distVal').innerText = `${data.DIST} cm`;
+  if (data.RSSI !== undefined) document.getElementById('rssiVal').innerText = `${data.RSSI} dBm`;
+  if (data.BATT !== undefined) document.getElementById('batVal').innerText = `${data.BATT} %`;
+}
+
+function setSystemHealth(){
+  document.getElementById('pktCount').innerText = packetCount;
+  const uptimeSec = Math.floor((Date.now() - startTime) / 1000);
+  document.getElementById('uptime').innerText = formatUptime(uptimeSec);
+}
+
+function formatUptime(s){
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s/60);
+  if (m < 60) return `${m}m ${s%60}s`;
+  const h = Math.floor(m/60);
+  return `${h}h ${m%60}m`;
+}
+
+/* -------------------------
+   Packet logging & history
+--------------------------*/
+function addPacketLog(msg){
+  const el = document.getElementById('packetLog');
+  const ts = new Date().toLocaleTimeString();
+  el.innerHTML += `<div>[${ts}] ${escapeHtml(msg)}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function addEventHistory(type, snapshot){
+  const ts = new Date().toLocaleString();
+  const item = { time: ts, type, snapshot, id: Date.now() };
+  history.unshift(item);
+  if (history.length > MAX_HISTORY) history = history.slice(0, MAX_HISTORY);
+  localStorage.setItem('eventHistory', JSON.stringify(history));
+  renderHistory();
+}
+
+/* render history table */
+function renderHistory(){
+  const tbody = document.querySelector('#historyTable tbody');
+  tbody.innerHTML = '';
+  for (let it of history){
+    const tr = document.createElement('tr');
+    const tdTime = document.createElement('td'); tdTime.textContent = it.time;
+    const tdType = document.createElement('td'); tdType.textContent = it.type;
+    const tdSnap = document.createElement('td'); tdSnap.textContent = Object.entries(it.snapshot || {}).map(([k,v])=>`${k}:${v}`).join(' ');
+    tr.appendChild(tdTime); tr.appendChild(tdType); tr.appendChild(tdSnap);
+    tbody.appendChild(tr);
+  }
+}
+renderHistory();
+
+/* -------------------------
+   Alert UI + sound
+--------------------------*/
+function showAlert(title, message){
+  document.getElementById('modalTitle').innerText = title;
+  document.getElementById('modalMsg').innerText = message;
+  document.getElementById('alertModal').classList.add('show');
+  // ring
+  if (soundEnabled) playTone(400, 0.18), setTimeout(() => playTone(520, 0.18), 220);
+}
+document.getElementById('dismissAlert').addEventListener('click', ()=> {
+  document.getElementById('alertModal').classList.remove('show');
+});
+
+/* WebAudio tone */
+let audioCtx = null;
+function playTone(freq=440, duration=0.15){
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.value = freq;
+    o.connect(g); g.connect(audioCtx.destination);
+    g.gain.value = 0.0001;
+    g.gain.linearRampToValueAtTime(0.12, audioCtx.currentTime + 0.01);
+    o.start();
+    setTimeout(()=> {
+      g.gain.linearRampToValueAtTime(0.0001, audioCtx.currentTime + 0.02);
+      o.stop(audioCtx.currentTime + 0.03);
+    }, duration*1000);
+  } catch(e){ console.warn('Tone error', e) }
+}
+
+/* -------------------------
+   Chart.js setup
+--------------------------*/
+const chartTemp = new Chart(document.getElementById('chartTemp').getContext('2d'), {
+  type:'line',
+  data:{ labels:[], datasets:[{ label:'Temp (°C)', data:[], borderColor:'#59f2ff', backgroundColor:'rgba(89,242,255,0.06)', tension:0.35, pointRadius:0 }]},
+  options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}}
+});
+const chartHum = new Chart(document.getElementById('chartHum').getContext('2d'), {
+  type:'line',
+  data:{ labels:[], datasets:[{ label:'Hum (%)', data:[], borderColor:'#ffb86b', backgroundColor:'rgba(255,184,107,0.06)', tension:0.35, pointRadius:0 }]},
+  options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}}
+});
+const chartGas = new Chart(document.getElementById('chartGas').getContext('2d'), {
+  type:'line',
+  data:{ labels:[], datasets:[{ label:'Gas', data:[], borderColor:'#ff6b6b', backgroundColor:'rgba(255,107,107,0.06)', tension:0.35, pointRadius:0 }]},
+  options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}}
+});
+
+function pushChart(chart, value){
+  chart.data.labels.push('');
+  chart.data.datasets[0].data.push(value === undefined ? null : Number(value));
+  if (chart.data.labels.length > CHART_WINDOW){
+    chart.data.labels.shift();
+    chart.data.datasets[0].data.shift();
+  }
+  chart.update('none');
+}
+
+/* -------------------------
+   Main incoming-data handler
+--------------------------*/
+function onIncomingRaw(text){
+  addPacketLog(text);
+  packetCount++;
+  document.getElementById('pktCount').innerText = packetCount;
+  const payload = parsePayload(text);
+
+  // Update UI
+  setSensorUI(payload);
+
+  // Update charts (only if numeric)
+  if (payload.TEMP !== undefined) pushChart(chartTemp, payload.TEMP);
+  if (payload.HUM !== undefined) pushChart(chartHum, payload.HUM);
+  if (payload.GAS !== undefined) pushChart(chartGas, payload.GAS);
+
+  // hazard evaluation
+  evaluateHazard(payload);
+  setSystemHealth();
+}
+
+/* Hazard logic */
+function evaluateHazard(payload){
+  // decide state
+  let state = 'NORMAL';
+  let msg = 'All parameters within limits.';
+  // gas check
+  if (payload.GAS !== undefined && Number(payload.GAS) >= THRESHOLD.GAS_CRITICAL){
+    state = 'CRITICAL';
+    msg = `Gas level critical (${payload.GAS}). Evacuate / check equipment.`;
+  } else if (payload.GAS !== undefined && Number(payload.GAS) >= THRESHOLD.GAS_WARNING){
+    state = 'WARNING';
+    msg = `Gas level high (${payload.GAS}).`;
+  }
+  // humidity check
+  if (payload.HUM !== undefined && Number(payload.HUM) >= THRESHOLD.HUM_WARNING){
+    state = state === 'CRITICAL' ? 'CRITICAL' : 'WARNING';
+    msg = (state==='CRITICAL' ? msg + ' ' : '') + `Humidity high (${payload.HUM}%).`;
+  }
+  // explicit ALERT flag in payload
+  if (payload.ALERT){
+    if (typeof payload.ALERT === 'string' && payload.ALERT.toUpperCase().includes('CRIT')) state = 'CRITICAL';
+    if (payload.ALERT === '1' || payload.ALERT === 1) state = 'CRITICAL';
+    msg = `Remote ALERT: ${payload.ALERT}`;
+  }
+
+  const indicator = document.getElementById('hazardIndicator');
+  if (state === 'CRITICAL'){
+    indicator.className = 'status status-critical';
+    indicator.innerText = 'CRITICAL';
+    addEventHistory('CRITICAL', payload);
+    showAlert('CRITICAL HAZARD', msg);
+  } else if (state === 'WARNING'){
+    indicator.className = 'status status-warning';
+    indicator.innerText = 'Warning';
+    // optional event history for warnings
+    addEventHistory('WARNING', payload);
+  } else {
+    indicator.className = 'status status-normal';
+    indicator.innerText = 'Normal';
+  }
+}
+
+/* -------------------------
+   WebSocket connection
+--------------------------*/
+document.getElementById('connectWs').addEventListener('click', () => {
+  const urlInput = document.getElementById('wsUrl').value.trim();
+  if (!urlInput) return alert('Enter WebSocket URL (ws://...)');
+  WS_URL = urlInput;
+  connectWebSocket(WS_URL);
+});
+
+function connectWebSocket(url){
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)){
+    ws.close();
+  }
+  ws = new WebSocket(url);
+  document.getElementById('wsStatus').innerText = 'Connecting...';
+  ws.onopen = () => {
+    document.getElementById('wsStatus').innerText = 'Connected';
+    addPacketLog(`[SYSTEM] Connected to WebSocket ${url}`);
+  };
+  ws.onmessage = (ev) => {
+    // try to parse as JSON first, else raw text
+    const data = ev.data;
+    if (typeof data === 'string') onIncomingRaw(data);
+    else {
+      // ArrayBuffer or Blob
+      const reader = new FileReader();
+      reader.onload = () => onIncomingRaw(reader.result);
+      reader.readAsText(data);
+    }
+  };
+  ws.onclose = (ev) => {
+    document.getElementById('wsStatus').innerText = 'Disconnected';
+    addPacketLog(`[SYSTEM] WebSocket closed`);
+  };
+  ws.onerror = (err) => {
+    document.getElementById('wsStatus').innerText = 'Error';
+    addPacketLog(`[SYSTEM] WS error`);
+    console.error('WS error', err);
+  };
+}
+
+/* -------------------------
+   Serial Web API (optional)
+   Requires secure context (https or localhost)
+--------------------------*/
+document.getElementById('connectSerial').addEventListener('click', async () => {
+  if (!('serial' in navigator)) {
+    alert('Serial Web API not available in this browser. Use Chrome/Edge with HTTPS or localhost.');
+    return;
+  }
+  try {
+    serialPort = await navigator.serial.requestPort();
+    await serialPort.open({ baudRate: 9600 });
+    document.getElementById('serialStatus').innerText = 'Connected';
+    addPacketLog('[SYSTEM] Serial opened');
+    serialReader = serialPort.readable.getReader();
+    readSerialLoop();
+  } catch (e){
+    console.error('Serial open failed', e);
+    alert('Serial failed: ' + (e.message || e));
+  }
+});
+
+async function readSerialLoop(){
+  const decoder = new TextDecoder();
+  let buf = '';
+  try {
+    while (true) {
+      const { value, done } = await serialReader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream:true});
+      // split by newline
+      let lines = buf.split(/\r?\n/);
+      buf = lines.pop();
+      for (let ln of lines) {
+        if (ln.trim()) onIncomingRaw(ln.trim());
+      }
+    }
+  } catch (e){
+    console.warn('Serial read error', e);
+  } finally {
+    if (serialReader) { serialReader.releaseLock(); serialReader = null; }
+    if (serialPort) { await serialPort.close(); serialPort = null; }
+    document.getElementById('serialStatus').innerText = 'Disconnected';
+  }
+}
+
+/* -------------------------
+   Utilities & UI actions
+--------------------------*/
+document.getElementById('clearLogs').addEventListener('click', () => {
+  document.getElementById('packetLog').innerHTML = '';
+  packetCount = 0;
+  document.getElementById('pktCount').innerText = 0;
+});
+document.getElementById('resetHistory').addEventListener('click', () => {
+  if (!confirm('Clear event history?')) return;
+  history = [];
+  localStorage.removeItem('eventHistory');
+  renderHistory();
+});
+document.getElementById('downloadLogs').addEventListener('click', () => {
+  const logs = document.getElementById('packetLog').innerText;
+  const blob = new Blob([logs], { type:'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `lora_logs_${Date.now()}.txt`; a.click();
+  URL.revokeObjectURL(url);
+});
+document.getElementById('simulateAlert').addEventListener('click', () => {
+  const fake = 'TEMP:30,HUM:85,GAS:510,VIB:Detected,DIST:18,RSSI:-62,BATT:88,ALERT:CRITICAL';
+  onIncomingRaw(fake);
+});
+document.getElementById('toggleSound').addEventListener('click', (e) => {
+  soundEnabled = !soundEnabled;
+  e.target.innerText = soundEnabled ? '🔔 Sound: On' : '🔕 Sound: Off';
+});
+
+/* escape html for logs */
+function escapeHtml(s){ return s.replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]; }); }
+
+/* -------------------------
+   small uptime ticker
+--------------------------*/
+setInterval(setSystemHealth, 1000);
+
+/* -------------------------
+   Demo auto-simulate when no connection present
+--------------------------*/
+let demoTimer = setInterval(()=>{
+  // if no WS and no serial connected, simulate data every 2s
+  const wsConnected = ws && ws.readyState === WebSocket.OPEN;
+  const serialConnected = serialPort && serialPort.readable;
+  if (!wsConnected && !serialConnected){
+    const d = {
+      TEMP: (18 + Math.random()*12).toFixed(1),
+      HUM: Math.floor(35 + Math.random()*50),
+      GAS: Math.floor(300 + Math.random()*300),
+      VIB: Math.random() > 0.9 ? 'Detected' : 'None',
+      DIST: Math.floor(10 + Math.random()*80),
+      RSSI: -70 + Math.floor(Math.random()*18),
+      BATT: Math.floor(60 + Math.random()*36)
+    };
+    onIncomingRaw(Object.entries(d).map(([k,v])=>`${k}:${v}`).join(','));
+  } else {
+    // connected — stop demo
+    // clearInterval(demoTimer);
+  }
+}, 2000);
+
+/* initialize */
+setSystemHealth();
+
+</script>
+</body>
+</html>
