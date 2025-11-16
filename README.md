@@ -1,2 +1,2 @@
-# Anveshan--SNOPS--Bengalore
-A scalable, low-power LoRa-based Smart Disaster Alert Node for detecting floods, gas leaks, and vibrations. The system uses modular sensors, solar power, and long-range LoRa communication to deliver real-time warnings even in remote areas. Developed for Anveshan SNOPS Bengaluru.
+The Smart Disaster Alert Node is a scalable, solar-powered, LoRa-based IoT system that detects multiple hazards, including floods, gas leaks, vibrations. It provides real-time early warnings even in remote areas without internet. The system is modular, low-cost, and easy to deploy on mobile rovers or fixed stations. By sending instant alerts to a central hub or local indicators, it helps save lives and protect assets.
+![Uploading image.png…]()
